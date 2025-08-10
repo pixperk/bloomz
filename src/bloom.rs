@@ -61,7 +61,13 @@ where
         }
     }
 
-    ///insert item
+    /// Insert an item into the Bloom filter.
+    ///
+    /// Computes `k` indices using double hashing based on two base hashes and
+    /// sets the corresponding bits. Duplicate inserts still increment the
+    /// internal `items` counter (no attempt to de-duplicate inputs is made).
+    ///
+    /// * `item` - The value to insert (any type implementing `Hash`).
     pub fn insert<T : Hash>(&mut self, item : &T){
         let (h1, h2) = hashing::hash2(&self.hasher_builder, item);
         for i in 0..self.k{
@@ -72,6 +78,11 @@ where
         self.items = self.items.saturating_add(1);
     }
 
+    /// Test whether an item is *probably* in the set.
+    ///
+    /// Returns `false` if any of the `k` derived bit positions is clear
+    /// (definitely not present). Returns `true` if all are set (item was
+    /// likely inserted earlier, with a chance of false positives).
     pub fn contains<T : Hash>(&self, item : &T) -> bool{
         let (h1, h2) = hashing::hash2(&self.hasher_builder, item);
        for i in 0..self.k {
@@ -84,32 +95,41 @@ where
         true
     }
 
-    /// union (bitwise OR). both must have same m and k.
+    /// In‑place union (bitwise OR) with another filter.
+    ///
+    /// Both filters must have identical `m` and `k` parameters.
     pub fn union_inplace(&mut self, other: &Self) {
         assert_eq!(self.m, other.m, "m mismatch for union");
         assert_eq!(self.k, other.k, "k mismatch for union");
         self.bits.or_with(&other.bits);
     }
 
-    /// intersection (bitwise AND). both must have same m and k.
+    /// In‑place intersection (bitwise AND) with another filter.
+    ///
+    /// Both filters must have identical `m` and `k` parameters.
     pub fn intersect_inplace(&mut self, other: &Self) {
         assert_eq!(self.m, other.m, "m mismatch for intersection");
         assert_eq!(self.k, other.k, "k mismatch for intersection");
         self.bits.and_with(&other.bits);
     }
 
-    /// clear all bits
+    /// Clear all bits and reset the item counter to zero.
     pub fn clear(&mut self) {
         self.bits.clear();
         self.items = 0;
     }
 
-    /// approximate count of insert calls (not exact, duplicates counted)
+    /// Approximate number of times `insert` was called.
+    ///
+    /// Note: duplicates are counted; this is not a distinct element count.
     pub fn approximate_items(&self) -> usize {
         self.items
     }
 
-    /// serialize to bytes: layout = words (u64 LE) + m (u64 LE) + k (u32 LE)
+    /// Serialize the filter into a byte vector.
+    ///
+    /// Layout:
+    ///   words (u64 little‑endian) + m (u64 LE) + k (u32 LE)
     pub fn to_bytes(&self) -> Vec<u8> {
         let words = self.bits.words_slice();
         let mut out = Vec::with_capacity(words.len() * 8 + 12);
@@ -121,7 +141,9 @@ where
         out
     }
 
-    /// deserialize (expects same layout as to_bytes)
+    /// Deserialize from bytes with an explicit hasher builder.
+    ///
+    /// Returns `None` if the data length or internal layout is invalid.
     pub fn from_bytes_hasher(data: &[u8], hasher_builder: S) -> Option<Self> {
         if data.len() < 12 { return None; }
         let meta_offset = data.len() - 12;
@@ -133,7 +155,7 @@ where
         k_bytes.copy_from_slice(&data[meta_offset+8..meta_offset+12]);
         let k = u32::from_le_bytes(k_bytes);
 
-        let words_expected = (m + 63) / 64;
+        let words_expected = m.div_ceil(64);
         if meta_offset != words_expected * 8 { return None; }
 
         let mut words = Vec::with_capacity(words_expected);
@@ -157,13 +179,12 @@ where
         })
     }
 
-    /// convenience wrapper using default hasher builder
+    /// Convenience wrapper that rebuilds using a default `RandomState`-derived builder.
     pub fn from_bytes(data: &[u8]) -> Option<Self>
     where
         std::collections::hash_map::RandomState: Clone,
         S: From<std::collections::hash_map::RandomState>,
     {
-        // if S can be constructed from RandomState, build one and call from_bytes_hasher
         let rs = std::collections::hash_map::RandomState::new();
         let builder: S = rs.into();
         Self::from_bytes_hasher(data, builder)
