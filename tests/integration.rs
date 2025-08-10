@@ -92,3 +92,47 @@ fn false_positive_rate_reasonable() {
     println!("Observed FP: {} / {} = {:.4}", fp, trials, rate);
     assert!(rate <= p * 5.0 + 0.005, "false positive rate too high: {}", rate);
 }
+
+#[test]
+#[cfg(feature = "rayon")]
+fn test_parallel_operations() {
+    use rayon::prelude::*;
+    
+    let rs = RandomState::new();
+    let mut bf = BloomFilter::with_hasher(10000, 7, rs.clone());
+    
+    // Prepare test data
+    let items: Vec<i32> = (0..1000).collect();
+    let test_items: Vec<i32> = (500..1500).collect(); // Half overlap with inserted items
+    
+    // Parallel batch insert
+    println!("🔧 Testing parallel batch insert...");
+    bf.insert_batch(items.par_iter().cloned());
+    
+    // Verify all inserted items are found
+    for item in &items {
+        assert!(bf.contains(item), "Should contain inserted item {}", item);
+    }
+    
+    // Test parallel contains_all (should be false since test_items includes items not inserted)
+    println!("🔧 Testing parallel contains_all...");
+    let all_present = bf.contains_all(test_items.par_iter().cloned());
+    assert!(!all_present, "contains_all should be false for mixed dataset");
+    
+    // Test parallel contains_batch
+    println!("🔧 Testing parallel contains_batch...");
+    let results = bf.contains_batch(test_items.par_iter().cloned());
+    assert_eq!(results.len(), test_items.len(), "Results length should match input");
+    
+    // Verify results: items 500-999 should be present, 1000-1499 might have false positives
+    let mut found_expected = 0;
+    for (i, &present) in results.iter().enumerate() {
+        let item = test_items[i];
+        if item < 1000 && present {
+            found_expected += 1;
+        }
+    }
+    assert!(found_expected > 400, "Should find most of the expected items (found {})", found_expected);
+    
+    println!("✅ Parallel operations test passed! Found {}/500 expected items", found_expected);
+}

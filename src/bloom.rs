@@ -3,13 +3,13 @@ use core::marker::PhantomData;
 
 use std::fmt;
 #[cfg(feature = "serde")] use serde::{Serialize, Deserialize, Serializer, Deserializer, ser::SerializeStruct};
+#[cfg(feature = "rayon")] use rayon::prelude::*;
 
 use crate::{bitset::BitSet, hashing, math};
 /// bloom filter with configurable BuildHasher `S`.
 ///
 /// `S` defaults to `std::collections::hash_map::RandomState` which uses SipHash (safe).
 #[derive(Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BloomFilter<S = std::collections::hash_map::RandomState> {
     bits: BitSet,
     m: usize, //number of bits
@@ -80,6 +80,48 @@ where
         self.items = self.items.saturating_add(1);
     }
 
+    /// Parallel batch insert using rayon (requires "rayon" feature).
+    ///
+    /// Uses a two-phase approach: compute indices in parallel,
+    /// then merge results to avoid data races on the bit array.
+    #[cfg(feature = "rayon")]
+    pub fn insert_batch<T>(&mut self, items: impl IntoParallelIterator<Item = T>)
+    where
+        T: Hash + Send + Sync,
+        S: Send + Sync,
+    {
+        use std::collections::HashSet;
+        use std::sync::Mutex;
+        
+        // Phase 1: Compute all indices in parallel and collect
+        let indices_set = Mutex::new(HashSet::new());
+        
+        items.into_par_iter().for_each(|item| {
+            let (h1, h2) = hashing::hash2(&self.hasher_builder, &item);
+            let mut local_indices = Vec::with_capacity(self.k as usize);
+            
+            for i in 0..self.k {
+                let combined = h1.wrapping_add((i as u64).wrapping_mul(h2));
+                let idx = (combined % (self.m as u64)) as usize;
+                local_indices.push(idx);
+            }
+            
+            let mut set = indices_set.lock().unwrap();
+            set.extend(local_indices);
+        });
+
+        // Phase 2: Set bits sequentially (no data races)
+        let indices = indices_set.into_inner().unwrap();
+        let count = indices.len();
+        
+        for idx in indices {
+            self.bits.set(idx);
+        }
+        
+        // Update items count (approximate, since we deduplicated indices)
+        self.items = self.items.saturating_add(count);
+    }
+
     /// Test whether an item is *probably* in the set.
     ///
     /// Returns `false` if any of the `k` derived bit positions is clear
@@ -95,6 +137,30 @@ where
             }
         }
         true
+    }
+
+    /// Parallel batch contains check (requires "rayon" feature).
+    ///
+    /// Returns `true` if ALL items are probably in the set.
+    #[cfg(feature = "rayon")]
+    pub fn contains_all<T>(&self, items: impl IntoParallelIterator<Item = T>) -> bool
+    where
+        T: Hash + Send + Sync,
+        S: Send + Sync,
+    {
+        items.into_par_iter().all(|item| self.contains(&item))
+    }
+
+    /// Parallel batch contains check returning a Vec of results (requires "rayon" feature).
+    ///
+    /// Returns a Vec<bool> with same length as input, indicating membership for each item.
+    #[cfg(feature = "rayon")]
+    pub fn contains_batch<T>(&self, items: impl IntoParallelIterator<Item = T>) -> Vec<bool>
+    where
+        T: Hash + Send + Sync,
+        S: Send + Sync,
+    {
+        items.into_par_iter().map(|item| self.contains(&item)).collect()
     }
 
     /// In‑place union (bitwise OR) with another filter.

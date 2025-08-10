@@ -1,151 +1,211 @@
-# bloomz
+# 🌸 Bloomz
 
-Fast, flexible Bloom filter for Rust with pluggable hash builders.
+**Fast, flexible Bloom filter for Rust with pluggable hashers and parallel operations.**
+
+[![Crates.io](https://img.shields.io/crates/v/bloomz.svg)](https://crates.io/crates/bloomz)
+[![Documentation](https://docs.rs/bloomz/badge.svg)](https://docs.rs/bloomz)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ## Features
-- Customizable number of bits (m) and hash functions (k)
-- Capacity / false-positive rate constructors
-- Generic over `BuildHasher` (defaults to `RandomState` / SipHash)
-- Union & intersection
-- Binary serialization (`to_bytes` / `from_bytes[_hasher]`)
-- Optional serde support (feature `serde`)
 
-## Add to your project
+- **Fast**: Optimized bit operations with efficient double hashing
+- **Flexible**: Pluggable hash builders (SipHash, AHash, xxHash, etc.)
+- **Parallel**: Batch operations with Rayon for multi-core performance  
+- **Serializable**: JSON and binary serialization with Serde
+- **Safe**: No unsafe code, extensive testing
+
+## Quick Start
+
+Add to your `Cargo.toml`:
+
 ```toml
 [dependencies]
-bloomz = { path = "./bloomz" } # or from crates.io once published
-# Optional
-bincode = "1"
-serde_json = "1"
+bloomz = "0.1"
+
+# Enable optional features
+bloomz = { version = "0.1", features = ["serde", "rayon"] }
 ```
 
-Enable serde in Cargo.toml if needed:
-```toml
-bloomz = { version = "*", features = ["serde"] }
-```
+### Basic Usage
 
-## Quick start
 ```rust
 use bloomz::BloomFilter;
 
-fn main() {
-    // Create from explicit m & k
-    let mut bf = BloomFilter::new(10_000, 7);
-    bf.insert(&"hello");
-    assert!(bf.contains(&"hello"));
-    assert!(!bf.contains(&"world"));
+// Create a filter for ~1000 items with 1% false positive rate
+let mut filter = BloomFilter::new_for_capacity(1000, 0.01);
 
-    // Create from capacity & target false positive probability p
-    let mut bf2 = BloomFilter::new_for_capacity(50_000, 0.01);
-    bf2.insert(&42u64);
-    assert!(bf2.contains(&42u64));
-}
+// Insert items
+filter.insert(&"hello");
+filter.insert(&42);
+
+// Check membership
+assert!(filter.contains(&"hello"));
+assert!(!filter.contains(&"world"));
 ```
 
-## Choosing m & k automatically
-```rust
-let n = 100_000;          // expected inserts
-let p = 0.005;            // desired false positive probability
-let mut bf = BloomFilter::new_for_capacity(n, p);
-```
+### Parallel Operations (with `rayon` feature)
 
-## Using a faster (non-cryptographic) hasher
-The default `RandomState` (SipHash) is DOS‑resistant but slower. For speed, pick a hasher like `ahash` (good balance of speed & quality) or `fxhash` (simple, very fast).
-
-Add a dependency:
-```toml
-[dependencies]
-ahash = "0.8"
-# or
-# fxhash = "0.2"
-```
-
-Use with `with_hasher`:
 ```rust
 use bloomz::BloomFilter;
-use ahash::RandomState as AHashState; // fast hash builder
+use rayon::prelude::*;
+use std::collections::hash_map::RandomState;
 
-let mut bf = BloomFilter::with_hasher(100_000, 6, AHashState::new());
-for key in 0u64..10_000 { bf.insert(&key); }
-assert!(bf.contains(&1234u64));
+let rs = RandomState::new();
+let mut filter = BloomFilter::with_hasher(10000, 7, rs);
+
+// Parallel batch insert
+let items: Vec<i32> = (0..1000).collect();
+filter.insert_batch(items.par_iter().cloned());
+
+// Parallel batch contains
+let test_items: Vec<i32> = (500..600).collect();
+let results = filter.contains_batch(test_items.par_iter().cloned());
+
+// Check if all items are present
+let all_present = filter.contains_all(test_items.par_iter().cloned());
 ```
-`fxhash` example:
+
+### Serialization (with `serde` feature)
+
 ```rust
 use bloomz::BloomFilter;
-use fxhash::FxBuildHasher; // provides BuildHasher
 
-let mut bf = BloomFilter::with_hasher(50_000, 5, FxBuildHasher::default());
-```
-Pick k empirically (5–8 typical) or rely on `new_for_capacity` + swap hasher after computing parameters.
+let mut filter = BloomFilter::new_for_capacity(100, 0.01);
+filter.insert(&"data");
 
-## Serialization (custom binary)
-```rust
-let mut bf = BloomFilter::new_for_capacity(5_000, 0.01);
-for i in 0..1000u32 { bf.insert(&i); }
-let bytes = bf.to_bytes();
-// Persist bytes ...
+// JSON serialization
+let json = serde_json::to_string(&filter)?;
+let restored: BloomFilter = serde_json::from_str(&json)?;
+
+// Binary serialization  
+let bytes = filter.to_bytes();
 let restored = BloomFilter::from_bytes(&bytes).unwrap();
-assert!(restored.contains(&123u32));
 ```
-If you used a custom hasher, use `from_bytes_hasher(bytes, hasher_builder)` with the same `BuildHasher` type.
 
-## Serde integration (optional feature)
-Enable the feature `serde` and (optionally) use formats like JSON, CBOR, or bincode.
+### Custom Hash Builders
 
-### JSON example
 ```rust
 use bloomz::BloomFilter;
-#[cfg(feature = "serde")] {
-    let mut bf = BloomFilter::new_for_capacity(10_000, 0.01);
-    bf.insert(&"alpha");
-    bf.insert(&"beta");
+use std::collections::hash_map::RandomState;
 
-    let json = serde_json::to_string(&bf).unwrap();
-    println!("JSON: {}", json);
+// Default SipHash (secure)
+let filter1 = BloomFilter::new(1000, 5);
 
-    let restored: BloomFilter = serde_json::from_str(&json).unwrap();
-    assert!(restored.contains(&"alpha"));
+// Custom RandomState
+let rs = RandomState::new();
+let filter2 = BloomFilter::with_hasher(1000, 5, rs);
+
+// Fast hashers (requires feature flags)
+#[cfg(feature = "fast-ahash")]
+{
+    use ahash::AHasher;
+    let filter3 = BloomFilter::with_hasher(1000, 5, 
+        ahash::RandomState::new());
 }
 ```
 
-### Bincode (compact) example
-```rust
-use bloomz::BloomFilter;
-#[cfg(feature = "serde")] {
-    let mut bf = BloomFilter::new_for_capacity(5_000, 0.01);
-    for i in 0..500u32 { bf.insert(&i); }
+## Performance
 
-    let encoded = bincode::serialize(&bf).unwrap();
-    let decoded: BloomFilter = bincode::deserialize(&encoded).unwrap();
-    assert!(decoded.contains(&42u32));
-}
+Bloomz uses several optimizations:
+
+- **Double Hashing**: Generate k hash functions from just 2 base hashes
+- **Efficient Bit Operations**: Word-aligned bit manipulation with `u64` 
+- **Parallel Processing**: Multi-threaded batch operations with Rayon
+- **Zero-Copy Serialization**: Direct bit vector serialization
+
+### Benchmarks
+
+Run benchmarks to compare hashers and parallel vs sequential operations:
+
+```bash
+# Compare different hash builders
+cargo bench --features "fast-ahash,fast-xxh3" bloom_hashers
+
+# Compare parallel vs sequential operations  
+cargo bench --features rayon parallel_bloom
 ```
 
-### Notes about serde
-- The serialized form stores: `m`, `k`, `items`, `words`.
-- The hasher builder is recreated with `Default`; changing hash algorithms across serialize/deserialize alters bit interpretation.
-- For reproducible bit layout across processes, use the same hasher implementation and seed strategy.
+## API Reference
 
-## Set operations
+### Core Types
+
+- `BloomFilter<S>` - Main bloom filter with hasher type `S`
+- `BitSet` - Underlying bit storage with optimized operations
+
+### Key Methods
+
+#### Insertion
+- `insert(&item)` - Insert a single item
+- `insert_batch(items)` - Parallel batch insert (rayon feature)
+
+#### Membership
+- `contains(&item)` - Check if item is probably in set
+- `contains_batch(items)` - Parallel batch check (rayon feature)  
+- `contains_all(items)` - Check if all items are present (rayon feature)
+
+#### Set Operations  
+- `union_inplace(&other)` - Merge with another filter
+- `intersect_inplace(&other)` - Keep only common elements
+- `clear()` - Remove all items
+
+#### Serialization
+- `to_bytes()` / `from_bytes()` - Binary format
+- Serde support for JSON/other formats
+
+### Mathematical Functions
+
 ```rust
-let mut a = BloomFilter::new_for_capacity(10_000, 0.01);
-let mut b = BloomFilter::new_for_capacity(10_000, 0.01);
-for i in 0..5000 { a.insert(&i); }
-for i in 2500..7500 { b.insert(&i); }
+use bloomz::math;
 
-let mut u = a.clone();
-u.union_inplace(&b);
-let mut inter = a.clone();
-inter.intersect_inplace(&b);
+// Calculate optimal parameters
+let m = math::optimal_m(n_items, false_positive_rate);
+let k = math::optimal_k(m, n_items);
+
+let filter = BloomFilter::new(m, k);
 ```
 
-## Estimating inserts
-`approximate_items()` returns how many times `insert` was called (duplicates count). For a true cardinality estimate you would need an additional structure (e.g. HyperLogLog) or track externally.
+## Feature Flags
 
-## Notes
-- Bloom filters have *no false negatives* (assuming consistent hashing) but can produce false positives.
-- Recreating with a different hasher after a filter is populated invalidates membership queries.
-- Parameter quality depends on good hash dispersion; poor hashers increase false positive rate.
+| Feature | Description | Dependencies |
+|---------|-------------|--------------|
+| `serde` | JSON/binary serialization | `serde`, `serde_json` |
+| `rayon` | Parallel batch operations | `rayon` |
+| `fast-ahash` | AHash hasher support | `ahash` |  
+| `fast-xxh3` | xxHash hasher support | `xxhash-rust` |
+
+## Examples
+
+See `src/main.rs` for a complete web crawler URL filter demo:
+
+```bash
+# Basic demo
+cargo run
+
+# With all features
+cargo run --features "rayon,serde,fast-ahash"
+```
+
+## Use Cases
+
+- **Web Crawlers**: Avoid revisiting URLs
+- **Caching**: Quick "not in cache" checks  
+- **Databases**: Reduce disk lookups
+- **Networking**: Packet deduplication
+- **Analytics**: Unique visitor tracking
+
+## Contributing
+
+Contributions welcome! Please check:
+
+- Run `cargo test --all-features` 
+- Run `cargo bench --all-features`
+- Add tests for new features
+- Update documentation
 
 ## License
-MIT (add a LICENSE file if not present).
+
+MIT License - see [LICENSE](LICENSE) file.
+
+---
+
+🌸 **Bloomz**: Where speed meets flexibility in Rust Bloom filters!
