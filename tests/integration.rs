@@ -106,7 +106,7 @@ fn test_parallel_operations() {
     let test_items: Vec<i32> = (500..1500).collect(); // Half overlap with inserted items
     
     // Parallel batch insert
-    println!("🔧 Testing parallel batch insert...");
+    println!("Testing parallel batch insert...");
     bf.insert_batch(items.par_iter().cloned());
     
     // Verify all inserted items are found
@@ -115,12 +115,12 @@ fn test_parallel_operations() {
     }
     
     // Test parallel contains_all (should be false since test_items includes items not inserted)
-    println!("🔧 Testing parallel contains_all...");
+    println!("Testing parallel contains_all...");
     let all_present = bf.contains_all(test_items.par_iter().cloned());
     assert!(!all_present, "contains_all should be false for mixed dataset");
     
     // Test parallel contains_batch
-    println!("🔧 Testing parallel contains_batch...");
+    println!("Testing parallel contains_batch...");
     let results = bf.contains_batch(test_items.par_iter().cloned());
     assert_eq!(results.len(), test_items.len(), "Results length should match input");
     
@@ -134,5 +134,5 @@ fn test_parallel_operations() {
     }
     assert!(found_expected > 400, "Should find most of the expected items (found {})", found_expected);
     
-    println!("✅ Parallel operations test passed! Found {}/500 expected items", found_expected);
+    println!("Parallel operations test passed! Found {}/500 expected items", found_expected);
 }
