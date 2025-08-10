@@ -2,7 +2,7 @@ use core::hash::{BuildHasher, Hash};
 use core::marker::PhantomData;
 
 use std::fmt;
-#[cfg(feature = "serde")] use serde::{Serialize, Deserialize, Serializer, Deserializer, ser::SerializeStruct};
+#[cfg(feature = "serde")] use serde::{Deserialize, Serializer, Deserializer, ser::SerializeStruct};
 #[cfg(feature = "rayon")] use rayon::prelude::*;
 
 use crate::{bitset::BitSet, hashing, math};

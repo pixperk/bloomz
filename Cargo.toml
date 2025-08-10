@@ -1,9 +1,21 @@
 [package]
 name = "bloomz"
 version = "0.1.0"
-edition = "2024"
-description = "bloomz: a fast, flexible bloom filter for rust"
+edition = "2021"
+authors = ["pixperk <your-email@example.com>"]
+license = "MIT OR Apache-2.0"
+description = "A fast, flexible Bloom filter library for Rust with parallel operations support"
+homepage = "https://github.com/pixperk/bloomz"
 repository = "https://github.com/pixperk/bloomz"
+documentation = "https://docs.rs/bloomz"
+readme = "README.md"
+keywords = ["bloom-filter", "probabilistic", "data-structure", "hash", "parallel"]
+categories = ["algorithms", "data-structures", "concurrency"]
+exclude = [
+    "target/*",
+    "*.log",
+    ".git/*",
+]
 
 [dependencies]
 serde = { version = "1.0", optional = true, features = ["derive"] }
