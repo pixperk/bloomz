@@ -2,12 +2,14 @@ use core::hash::{BuildHasher, Hash};
 use core::marker::PhantomData;
 
 use std::fmt;
+#[cfg(feature = "serde")] use serde::{Serialize, Deserialize, Serializer, Deserializer, ser::SerializeStruct};
 
 use crate::{bitset::BitSet, hashing, math};
 /// bloom filter with configurable BuildHasher `S`.
 ///
 /// `S` defaults to `std::collections::hash_map::RandomState` which uses SipHash (safe).
 #[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BloomFilter<S = std::collections::hash_map::RandomState> {
     bits: BitSet,
     m: usize, //number of bits
@@ -188,5 +190,34 @@ where
         let rs = std::collections::hash_map::RandomState::new();
         let builder: S = rs.into();
         Self::from_bytes_hasher(data, builder)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<S> serde::Serialize for BloomFilter<S>
+where S: BuildHasher + Clone + Default {
+    fn serialize<Se: Serializer>(&self, serializer: Se) -> Result<Se::Ok, Se::Error> {
+        let mut st = serializer.serialize_struct("BloomFilter", 4)?;
+        st.serialize_field("m", &self.m)?;
+        st.serialize_field("k", &self.k)?;
+        st.serialize_field("items", &self.items)?;
+        st.serialize_field("words", self.bits.words_slice())?;
+        st.end()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, S> serde::Deserialize<'de> for BloomFilter<S>
+where S: BuildHasher + Clone + Default {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct BFHelper { m: usize, k: u32, items: usize, words: Vec<u64> }
+        let helper = BFHelper::deserialize(deserializer)?;
+        let expected = helper.m.div_ceil(64);
+        if helper.words.len() != expected {
+            return Err(serde::de::Error::custom("words length mismatch"));
+        }
+        let bitset = BitSet::from_words(helper.m, helper.words);
+        Ok(Self { bits: bitset, m: helper.m, k: helper.k, items: helper.items, hasher_builder: S::default(), _marker: PhantomData })
     }
 }

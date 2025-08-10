@@ -1,8 +1,11 @@
-#[derive(Clone)]
-/// Compact fixed-size bit set storing bits in a Vec<u64>. 
+#[cfg(feature = "serde")] use serde::{Serialize, Deserialize};
+
+/// Compact fixed-size bit set storing bits in a Vec<u64>.
 ///
 /// Used internally by the Bloom filter but can be reused for other
 /// bit-indexable purposes. Indexing is zero-based.
+#[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BitSet{
     words :  Vec<u64>,
     bits : usize,
@@ -14,6 +17,14 @@ impl BitSet{
         let words = bits.div_ceil(64);
         Self { words: 
             vec![0u64; words], bits }
+    }
+
+    /// Construct directly from a words vector (length must match bits.div_ceil(64)).
+    #[allow(dead_code)]
+    pub(crate) fn from_words(bits: usize, words: Vec<u64>) -> Self {
+        let expected = bits.div_ceil(64);
+        assert_eq!(words.len(), expected, "words length mismatch for bits");
+        Self { words, bits }
     }
 
     /// Set (turn on) the bit at global index `idx`.
